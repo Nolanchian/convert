@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nolan｜快速轉檔器</title>
+<meta name="description" content="RAW（CR3）、JPG、PNG 快速批次轉成 JPG、PNG、WebP。">
+<style>
+  :root {
+    --bg: #f3efe6;
+    --panel: #fffdf7;
+    --ink: #2b2840;
+    --muted: #6d6982;
+    --border: #2b2840;
+    --shadow: #2b2840;
+    --accent: #3fc1b0;
+    --accent-strong: #16756b;
+    --accent-soft: #d5f3ee;
+    --on-accent: #0f2d29;
+    --bad: #c93c3c;
+    --good: #23855a;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16151d;
+      --panel: #211f2b;
+      --ink: #ebe8f5;
+      --muted: #a5a1b8;
+      --border: #5b5775;
+      --shadow: #07060a;
+      --accent: #4fd1c5;
+      --accent-strong: #8be9dd;
+      --accent-soft: #1d3936;
+      --bad: #ff7b7b;
+      --good: #6fd39c;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.6 system-ui, -apple-system, "PingFang TC", "Noto Sans TC", sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 28px 16px 48px; }
+  header.top { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  .logo-tile {
+    width: 64px; height: 64px; padding: 6px;
+    background: #f3efe6; border: 2px solid var(--border); box-shadow: 4px 4px 0 var(--shadow);
+  }
+  .logo-tile svg { width: 100%; height: 100%; display: block; }
+  h1 { margin: 0; font-size: 24px; letter-spacing: .02em; line-height: 1.3; }
+  h1 .divider { color: var(--accent-strong); margin: 0 2px; }
+  .sub { margin: 2px 0 0; color: var(--muted); font: 12px/1.4 var(--mono); }
+  .badge {
+    margin-left: auto; padding: 4px 10px; font-size: 12px;
+    border: 2px solid var(--border); background: var(--panel); box-shadow: 2px 2px 0 var(--shadow);
+  }
+  .badge[data-engine="local"] { background: var(--accent-soft); }
+
+  .tabs { display: flex; gap: 10px; margin-top: 24px; }
+  .tabs[hidden] { display: none; }
+
+  .card {
+    background: var(--panel); border: 2px solid var(--border); box-shadow: 4px 4px 0 var(--shadow);
+    padding: 18px; margin-top: 18px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 14px; letter-spacing: .08em; color: var(--muted); font-weight: 600; }
+  .field { display: grid; grid-template-columns: 100px 1fr; gap: 12px; align-items: center; margin: 12px 0; }
+  .field > label:first-child, .field > span:first-child { font-weight: 600; font-size: 14px; }
+  .field[hidden] { display: none; }
+
+  .btn {
+    font: inherit; font-size: 14px; color: var(--ink); background: var(--panel);
+    border: 2px solid var(--border); box-shadow: 3px 3px 0 var(--shadow);
+    padding: 7px 16px; cursor: pointer; text-decoration: none; display: inline-block;
+  }
+  .btn:active:not(:disabled) { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); color: var(--on-accent); font-weight: 700; }
+  .btn[aria-selected="true"] { background: var(--ink); color: var(--panel); }
+  .btn.small { padding: 3px 10px; font-size: 13px; box-shadow: 2px 2px 0 var(--shadow); }
+  :focus-visible { outline: 3px solid var(--accent-strong); outline-offset: 2px; }
+
+  .seg { display: inline-flex; border: 2px solid var(--border); box-shadow: 3px 3px 0 var(--shadow); width: fit-content; }
+  .seg button {
+    font: 600 14px/1 var(--mono); border: 0; background: var(--panel); color: var(--ink);
+    padding: 9px 18px; cursor: pointer;
+  }
+  .seg button + button { border-left: 2px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--on-accent); }
+  .seg button:disabled { opacity: .4; cursor: not-allowed; text-decoration: line-through; }
+
+  .range-row { display: flex; align-items: center; gap: 12px; }
+  .range-row input { flex: 1; accent-color: var(--accent-strong); }
+  .range-row output { font: 600 14px var(--mono); min-width: 2.5em; text-align: right; }
+
+  select, input[type="text"] {
+    font: inherit; color: var(--ink); background: var(--bg);
+    border: 2px solid var(--border); padding: 7px 10px; width: 100%;
+  }
+  select { width: auto; min-width: 160px; }
+  .check { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+  .check input { margin-top: 5px; accent-color: var(--accent-strong); }
+  .hint { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+  #dropzone {
+    border: 2px dashed var(--border); padding: 34px 16px; text-align: center;
+    background: var(--bg); transition: background .15s;
+  }
+  #dropzone.dragover { background: var(--accent-soft); border-style: solid; }
+  #dropzone p { margin: 0 0 12px; }
+  .summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; font-size: 14px; }
+  .summary[hidden] { display: none; }
+  .summary .mono { font-family: var(--mono); font-size: 13px; }
+
+  .run-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .progress { flex: 1; min-width: 180px; height: 18px; border: 2px solid var(--border); background: var(--bg); }
+  #bar {
+    height: 100%; width: 0;
+    background: repeating-linear-gradient(90deg, var(--accent) 0 10px, var(--accent-strong) 10px 12px);
+  }
+  #status { font: 13px/1.5 var(--mono); color: var(--muted); margin: 10px 0 0; min-height: 1.5em; }
+  #status.error { color: var(--bad); }
+  #result-actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 12px; }
+  #result-actions:empty { display: none; }
+  details { margin-top: 10px; font-size: 13px; }
+  details ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  #log {
+    list-style: none; margin: 12px 0 0; padding: 0; max-height: 280px; overflow: auto;
+    font: 12px/1.75 var(--mono);
+  }
+  #log:empty { display: none; }
+  #log li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #log .ok::before { content: "✓ "; color: var(--good); }
+  #log .bad { color: var(--bad); white-space: normal; }
+  #log .bad::before { content: "✗ "; }
+
+  footer { margin-top: 28px; color: var(--muted); font-size: 12px; }
+  footer code { font-family: var(--mono); }
+  footer a { color: var(--accent-strong); }
+
+  @media (max-width: 560px) {
+    .field { grid-template-columns: 1fr; gap: 6px; }
+    .badge { margin-left: 0; }
+    h1 { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="logo-tile">
+      <svg id="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" shape-rendering="crispEdges" role="img" aria-label="像素電腦">
+        <rect x="1" y="0" width="14" height="10" fill="#2b2840"/>
+        <rect x="2" y="1" width="12" height="8" fill="#e9e2cc"/>
+        <rect x="3" y="2" width="10" height="6" fill="#3fc1b0"/>
+        <rect x="4" y="3" width="1" height="1" fill="#0f3d38"/>
+        <rect x="5" y="4" width="1" height="1" fill="#0f3d38"/>
+        <rect x="4" y="5" width="1" height="1" fill="#0f3d38"/>
+        <rect x="6" y="5" width="3" height="1" fill="#0f3d38"/>
+        <rect x="10" y="2" width="2" height="1" fill="#b6f3ea"/>
+        <rect x="12" y="3" width="1" height="1" fill="#b6f3ea"/>
+        <rect x="12" y="8" width="1" height="1" fill="#e8962e"/>
+        <rect x="6" y="10" width="4" height="1" fill="#2b2840"/>
+        <rect x="4" y="11" width="8" height="1" fill="#2b2840"/>
+        <rect x="1" y="13" width="14" height="3" fill="#2b2840"/>
+        <rect x="2" y="14" width="12" height="1" fill="#e9e2cc"/>
+        <rect x="4" y="14" width="1" height="1" fill="#2b2840"/>
+        <rect x="7" y="14" width="1" height="1" fill="#2b2840"/>
+        <rect x="10" y="14" width="1" height="1" fill="#2b2840"/>
+      </svg>
+    </div>
+    <div>
+      <h1>Nolan<span class="divider">｜</span>快速轉檔器</h1>
+      <p class="sub">CR3・JPG・PNG → JPG・PNG・WebP</p>
+    </div>
+    <span id="engine-badge" class="badge">偵測中…</span>
+  </header>
+
+  <nav id="tabs" class="tabs" role="tablist" hidden>
+    <button class="btn" role="tab" data-tab="drop" aria-selected="true">拖曳檔案</button>
+    <button class="btn" role="tab" data-tab="folder" aria-selected="false">Mac 資料夾</button>
+  </nav>
+
+  <section class="card">
+    <h2>輸出設定</h2>
+    <div class="field">
+      <span>格式</span>
+      <div class="seg" role="group" aria-label="輸出格式">
+        <button type="button" data-format="jpg">JPG</button>
+        <button type="button" data-format="png">PNG</button>
+        <button type="button" data-format="webp">WebP</button>
+      </div>
+    </div>
+    <div class="field" id="quality-field">
+      <label for="quality">品質</label>
+      <div class="range-row">
+        <input id="quality" type="range" min="40" max="100" step="1" value="90">
+        <output id="quality-value" for="quality">90</output>
+      </div>
+    </div>
+    <div class="field">
+      <label for="max-side">長邊上限</label>
+      <select id="max-side">
+        <option value="">原尺寸</option>
+        <option value="4096">4096 px</option>
+        <option value="3000">3000 px</option>
+        <option value="2560">2560 px</option>
+        <option value="2048">2048 px</option>
+        <option value="1600">1600 px</option>
+        <option value="1080">1080 px</option>
+      </select>
+    </div>
+    <div class="field">
+      <span>CR3</span>
+      <div>
+        <label class="check"><input id="fast" type="checkbox"> 快速模式：直接取相機內嵌的 JPEG</label>
+        <p class="hint" id="fast-hint"></p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="panel-drop">
+    <h2>檔案</h2>
+    <div id="dropzone">
+      <p>把照片或整個資料夾拖進來</p>
+      <button type="button" class="btn" id="pick">選擇檔案</button>
+      <input id="file-input" type="file" multiple hidden
+        accept=".cr3,.cr2,.nef,.arw,.dng,.raf,.orf,.rw2,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif">
+    </div>
+    <div class="summary" id="summary" hidden>
+      <span id="summary-text"></span>
+      <button type="button" class="btn small" id="clear">清除</button>
+    </div>
+  </section>
+
+  <section class="card" id="panel-folder" hidden>
+    <h2>Mac 上的資料夾</h2>
+    <div class="field">
+      <label for="folder-path">來源</label>
+      <input id="folder-path" type="text" placeholder="~/Pictures/2026旅行" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <label for="output-path">輸出到</label>
+      <input id="output-path" type="text" placeholder="預設：來源資料夾旁邊的「資料夾名_jpg」" autocomplete="off" spellcheck="false">
+    </div>
+    <div class="field">
+      <span></span>
+      <label class="check"><input id="recursive" type="checkbox"> 包含子資料夾</label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="run-row">
+      <button type="button" class="btn primary" id="start" disabled>開始轉檔</button>
+      <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="bar"></div></div>
+    </div>
+    <p id="status" role="status"></p>
+    <div id="skipped"></div>
+    <div id="result-actions"></div>
+    <ol id="log"></ol>
+  </section>
+
+  <footer id="footer"></footer>
+</div>
+
+<script type="text/plain" id="worker-src">
+const RAW_EXTS = new Set(['cr2', 'cr3', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2']);
+const MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes) {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) crc = CRC_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const fourcc = (view, offset) =>
+  String.fromCharCode(view.getUint8(offset), view.getUint8(offset + 1), view.getUint8(offset + 2), view.getUint8(offset + 3));
+
+function* iterBoxes(view, start, end) {
+  let position = start;
+  while (position + 8 <= end) {
+    let size = view.getUint32(position);
+    const kind = fourcc(view, position + 4);
+    let header = 8;
+    if (size === 1) { size = Number(view.getBigUint64(position + 8)); header = 16; }
+    else if (size === 0) size = end - position;
+    if (size < header) return;
+    yield [kind, position + header, position + size];
+    position += size;
+  }
+}
+
+function findBox(view, path, start, end) {
+  for (const [kind, bodyStart, bodyEnd] of iterBoxes(view, start, end)) {
+    if (kind === path[0]) return path.length === 1 ? [bodyStart, bodyEnd] : findBox(view, path.slice(1), bodyStart, bodyEnd);
+  }
+  return null;
+}
+
+const readView = async (file, start, end) => new DataView(await file.slice(start, end).arrayBuffer());
+
+// CR3 是 ISO BMFF 容器，第一條 track 是相機產生的全尺寸 JPEG；只讀 moov 和那一段，不必載入整個 RAW
+async function extractCr3Preview(file) {
+  let position = 0;
+  let moov = null;
+  while (position + 8 <= file.size) {
+    const header = await readView(file, position, Math.min(position + 16, file.size));
+    let size = header.getUint32(0);
+    const kind = fourcc(header, 4);
+    if (size === 1) size = Number(header.getBigUint64(8));
+    else if (size === 0) size = file.size - position;
+    if (kind === 'moov') { moov = await readView(file, position, position + size); break; }
+    if (size < 8) break;
+    position += size;
+  }
+  if (!moov) throw new Error('不是有效的 CR3（找不到 moov）');
+  const stbl = findBox(moov, ['moov', 'trak', 'mdia', 'minf', 'stbl'], 0, moov.byteLength);
+  const stsz = stbl && findBox(moov, ['stsz'], ...stbl);
+  if (!stsz) throw new Error('找不到內嵌 JPEG');
+  const size = moov.getUint32(stsz[0] + 4) || moov.getUint32(stsz[0] + 12);
+  const co64 = findBox(moov, ['co64'], ...stbl);
+  const stco = co64 ? null : findBox(moov, ['stco'], ...stbl);
+  const offset = co64 ? Number(moov.getBigUint64(co64[0] + 8)) : moov.getUint32(stco[0] + 8);
+  const bytes = new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('內嵌資料不是 JPEG');
+  return bytes;
+}
+
+// 不重新壓縮，直接拿掉 APP1（EXIF/XMP，含 GPS）
+function stripApp1(bytes) {
+  const kept = [bytes.subarray(0, 2)];
+  let position = 2;
+  while (position + 4 <= bytes.length && bytes[position] === 0xff) {
+    const marker = bytes[position + 1];
+    if (marker === 0xda) break;
+    const length = (bytes[position + 2] << 8) | bytes[position + 3];
+    if (marker !== 0xe1) kept.push(bytes.subarray(position, position + 2 + length));
+    position += 2 + length;
+  }
+  kept.push(bytes.subarray(position));
+  const out = new Uint8Array(kept.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of kept) { out.set(part, offset); offset += part.length; }
+  return out;
+}
+
+function reply(bytes) {
+  self.postMessage({ ok: true, bytes, crc: crc32(bytes) }, [bytes.buffer]);
+}
+
+self.onmessage = async ({ data }) => {
+  const { file, format, quality, maxSide } = data;
+  try {
+    const ext = file.name.split('.').pop().toLowerCase();
+    let source = file;
+    if (ext === 'cr3') {
+      const preview = await extractCr3Preview(file);
+      if (format === 'jpg' && !maxSide) return reply(stripApp1(preview));
+      source = new Blob([preview], { type: 'image/jpeg' });
+    } else if (RAW_EXTS.has(ext)) {
+      throw new Error('瀏覽器模式只支援 CR3 這種 RAW');
+    }
+    const bitmap = await createImageBitmap(source, { imageOrientation: 'from-image' });
+    const scale = maxSide ? Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height)) : 1;
+    const width = Math.round(bitmap.width * scale);
+    const height = Math.round(bitmap.height * scale);
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext('2d');
+    if (format === 'jpg') { context.fillStyle = '#fff'; context.fillRect(0, 0, width, height); }
+    context.imageSmoothingQuality = 'high';
+    context.drawImage(bitmap, 0, 0, width, height);
+    bitmap.close();
+    const blob = await canvas.convertToBlob({ type: MIME[format], quality: quality / 100 });
+    if (blob.type !== MIME[format]) throw new Error(`這個瀏覽器不支援輸出 ${format.toUpperCase()}`);
+    reply(new Uint8Array(await blob.arrayBuffer()));
+  } catch (error) {
+    self.postMessage({ ok: false, error: error?.message || String(error) });
+  }
+};
+</script>
+
+<script type="module">
+const RAW_EXTS = new Set(['cr2', 'cr3', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2']);
+const INPUT_EXTS = new Set([...RAW_EXTS, 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif']);
+const DEFAULT_QUALITY = { jpg: 90, webp: 82 };
+const LOCAL_HOSTS = ['127.0.0.1', 'localhost'];
+
+const $ = (id) => document.getElementById(id);
+const extOf = (name) => (name.includes('.') ? name.split('.').pop().toLowerCase() : '');
+const stemOf = (name) => name.replace(/\.[^.]+$/, '');
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const state = { engine: 'browser', tab: 'drop', format: 'jpg', files: [], running: false };
+
+function formatBytes(bytes) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+  if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+function setFavicon() {
+  const link = document.createElement('link');
+  link.rel = 'icon';
+  link.type = 'image/svg+xml';
+  link.href = `data:image/svg+xml,${encodeURIComponent($('logo').outerHTML)}`;
+  document.head.append(link);
+}
+
+async function detectEngine() {
+  // 只有從這台電腦的本機伺服器打開時才用本機引擎；GitHub Pages 上一律在瀏覽器裡轉
+  if (!LOCAL_HOSTS.includes(location.hostname)) return 'browser';
+  try {
+    const response = await fetch('/api/ping', { cache: 'no-store' });
+    if (response.ok) return 'local';
+  } catch {}
+  return 'browser';
+}
+
+function browserCanEncodeWebp() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  return canvas.toDataURL('image/webp').startsWith('data:image/webp');
+}
+
+function applyEngine() {
+  const local = state.engine === 'local';
+  const badge = $('engine-badge');
+  badge.dataset.engine = state.engine;
+  badge.textContent = local ? '本機完整模式・用這台 Mac 轉' : '瀏覽器模式・用你自己的裝置轉';
+  $('tabs').hidden = !local;
+  const fast = $('fast');
+  fast.checked = !local;
+  fast.disabled = !local;
+  $('fast-hint').textContent = local
+    ? '不勾：用 macOS 完整解 RAW（畫質最好、較慢）。勾選：幾乎瞬間完成，畫質是相機內建的版本。'
+    : '瀏覽器無法完整解 RAW，CR3 一律取相機內嵌的 JPEG。若同時有同名 JPG，會改用那張（畫質較好）。';
+  if (!local && !browserCanEncodeWebp()) {
+    const webp = document.querySelector('[data-format="webp"]');
+    webp.disabled = true;
+    webp.title = '這個瀏覽器不支援輸出 WebP，請改用 Chrome、Edge 或 Firefox';
+  }
+  $('footer').innerHTML = local
+    ? '本機模式：伺服器只接受這台電腦（127.0.0.1）的連線，別人無法使用你的電腦轉檔。'
+    : '瀏覽器模式：檔案不會上傳到任何地方，所有運算都在你自己的裝置上完成。想在 Mac 上完整解 RAW，請下載<a href="https://github.com/Nolanchian/convert">原始碼</a>並執行 <code>python3 server.py</code>。';
+}
+
+function setFormat(format) {
+  state.format = format;
+  for (const button of document.querySelectorAll('[data-format]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.format === format));
+  }
+  $('quality-field').hidden = format === 'png';
+  $('quality').value = DEFAULT_QUALITY[format] ?? 90;
+  $('quality-value').value = $('quality').value;
+  updateOutputPlaceholder();
+}
+
+function setTab(tab) {
+  state.tab = tab;
+  for (const button of document.querySelectorAll('[data-tab]')) {
+    button.setAttribute('aria-selected', String(button.dataset.tab === tab));
+  }
+  $('panel-drop').hidden = tab !== 'drop';
+  $('panel-folder').hidden = tab !== 'folder';
+  updateStartButton();
+}
+
+function updateStartButton() {
+  const ready = state.tab === 'folder' ? $('folder-path').value.trim() !== '' : state.files.length > 0;
+  $('start').disabled = state.running || !ready;
+}
+
+function updateOutputPlaceholder() {
+  const source = $('folder-path').value.trim().replace(/\/+$/, '');
+  $('output-path').placeholder = source
+    ? `預設：${source}_${state.format}`
+    : `預設：來源資料夾旁邊的「資料夾名_${state.format}」`;
+}
+
+async function walkEntry(entry, out) {
+  if (entry.isFile) {
+    out.push(await new Promise((resolve, reject) => entry.file(resolve, reject)));
+    return;
+  }
+  const reader = entry.createReader();
+  while (true) {
+    const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+    if (!batch.length) break;
+    for (const child of batch) await walkEntry(child, out);
+  }
+}
+
+async function filesFromDrop(dataTransfer) {
+  // DataTransfer 在第一個 await 之後就會失效，所以要先同步取出 entry
+  const entries = [...dataTransfer.items].map((item) => item.webkitGetAsEntry?.()).filter(Boolean);
+  if (!entries.length) return [...dataTransfer.files];
+  const files = [];
+  for (const entry of entries) await walkEntry(entry, files);
+  return files;
+}
+
+function addFiles(list) {
+  const known = new Set(state.files.map((file) => `${file.name}|${file.size}|${file.lastModified}`));
+  for (const file of list) {
+    const key = `${file.name}|${file.size}|${file.lastModified}`;
+    if (file.name.startsWith('.') || !INPUT_EXTS.has(extOf(file.name)) || known.has(key)) continue;
+    known.add(key);
+    state.files.push(file);
+  }
+  renderSummary();
+}
+
+function renderSummary() {
+  const counts = {};
+  let totalBytes = 0;
+  for (const file of state.files) {
+    const ext = extOf(file.name).toUpperCase();
+    counts[ext] = (counts[ext] || 0) + 1;
+    totalBytes += file.size;
+  }
+  const breakdown = Object.entries(counts).map(([ext, count]) => `${ext} ${count}`).join('・');
+  $('summary').hidden = state.files.length === 0;
+  $('summary-text').innerHTML = `共 <strong>${state.files.length}</strong> 個檔案，${formatBytes(totalBytes)} <span class="mono">（${breakdown}）</span>`;
+  updateStartButton();
+}
+
+function readOptions() {
+  const maxSide = Number($('max-side').value) || null;
+  return {
+    format: state.format,
+    quality: state.format === 'png' ? null : Number($('quality').value),
+    maxSide,
+    fast: $('fast').checked,
+  };
+}
+
+const serverOptions = (options) => ({
+  format: options.format, quality: options.quality, max_side: options.maxSide, fast: options.fast,
+});
+
+function resetResult() {
+  $('log').replaceChildren();
+  $('skipped').replaceChildren();
+  $('result-actions').replaceChildren();
+  setStatus('');
+  setProgress(0, 0);
+}
+
+function setStatus(text, isError = false) {
+  $('status').textContent = text;
+  $('status').classList.toggle('error', isError);
+}
+
+function setProgress(done, total, label) {
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  $('bar').style.width = `${percent}%`;
+  document.querySelector('.progress').setAttribute('aria-valuenow', String(percent));
+  if (label) setStatus(`${label} ${done}/${total}`);
+}
+
+function appendLog(name, output, error) {
+  const item = document.createElement('li');
+  item.className = error ? 'bad' : 'ok';
+  item.textContent = error ? `${name}：${error}` : `${name} → ${output}`;
+  $('log').append(item);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function showSkipped(messages) {
+  if (!messages.length) return;
+  const details = document.createElement('details');
+  const summary = document.createElement('summary');
+  summary.textContent = `略過 ${messages.length} 個檔案`;
+  const list = document.createElement('ul');
+  for (const message of messages) {
+    const item = document.createElement('li');
+    item.textContent = message;
+    list.append(item);
+  }
+  details.append(summary, list);
+  $('skipped').replaceChildren(details);
+}
+
+function addAction(element) {
+  $('result-actions').append(element);
+}
+
+function downloadLink(href, filename, label) {
+  const link = document.createElement('a');
+  link.className = 'btn primary';
+  link.href = href;
+  if (filename) link.download = filename;
+  link.textContent = label;
+  return link;
+}
+
+function finishedText(done, failures, skippedCount, startedAt) {
+  const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
+  return `完成 ${done - failures} 個・失敗 ${failures} 個・略過 ${skippedCount} 個・耗時 ${seconds} 秒`;
+}
+
+// ---------- 瀏覽器引擎 ----------
+
+function planBrowserTasks(files, format) {
+  // 相機 RAW+JPEG 同時拍時，相機那張 JPG 比 CR3 內嵌的預覽畫質好，優先用 JPG
+  const nonRawStems = new Set(files.filter((file) => !RAW_EXTS.has(extOf(file.name))).map((file) => stemOf(file.name).toLowerCase()));
+  const usedNames = new Set();
+  const tasks = [];
+  const skipped = [];
+  for (const file of files) {
+    const ext = extOf(file.name);
+    const stem = stemOf(file.name);
+    if (RAW_EXTS.has(ext) && ext !== 'cr3') { skipped.push(`${file.name}：瀏覽器模式只支援 CR3 這種 RAW`); continue; }
+    if (ext === 'cr3' && nonRawStems.has(stem.toLowerCase())) { skipped.push(`${file.name}：已有同名的 JPG/PNG，改用那張`); continue; }
+    const outName = `${stem}.${format}`;
+    if (usedNames.has(outName.toLowerCase())) { skipped.push(`${file.name}：輸出檔名 ${outName} 重複`); continue; }
+    usedNames.add(outName.toLowerCase());
+    tasks.push({ file, outName });
+  }
+  return { tasks, skipped };
+}
+
+function convertInWorker(worker, task, options) {
+  return new Promise((resolve) => {
+    worker.onmessage = (event) => resolve(event.data);
+    worker.onerror = (event) => { event.preventDefault(); resolve({ ok: false, error: event.message || '轉檔失敗' }); };
+    worker.postMessage({
+      file: task.file,
+      format: options.format,
+      quality: options.quality ?? DEFAULT_QUALITY[options.format] ?? 90,
+      maxSide: options.maxSide,
+    });
+  });
+}
+
+function dosDateTime(date) {
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | (date.getSeconds() >> 1),
+    date: ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+  };
+}
+
+// 圖檔本身已經壓縮過，zip 只做 STORED（不再壓縮），省時間又不用外部套件
+function buildZip(entries) {
+  const encoder = new TextEncoder();
+  const { time, date } = dosDateTime(new Date());
+  const parts = [];
+  const central = [];
+  let offset = 0;
+  for (const entry of entries) {
+    const name = encoder.encode(entry.name);
+    const size = entry.bytes.length;
+    if (offset + 30 + name.length + size > 0xffffffff) throw new Error('結果超過 4GB，請分批轉檔');
+    const local = new DataView(new ArrayBuffer(30));
+    local.setUint32(0, 0x04034b50, true);
+    local.setUint16(4, 20, true);
+    local.setUint16(6, 0x0800, true);
+    local.setUint16(10, time, true);
+    local.setUint16(12, date, true);
+    local.setUint32(14, entry.crc, true);
+    local.setUint32(18, size, true);
+    local.setUint32(22, size, true);
+    local.setUint16(26, name.length, true);
+    parts.push(local, name, entry.bytes);
+
+    const header = new DataView(new ArrayBuffer(46));
+    header.setUint32(0, 0x02014b50, true);
+    header.setUint16(4, 20, true);
+    header.setUint16(6, 20, true);
+    header.setUint16(8, 0x0800, true);
+    header.setUint16(12, time, true);
+    header.setUint16(14, date, true);
+    header.setUint32(16, entry.crc, true);
+    header.setUint32(20, size, true);
+    header.setUint32(24, size, true);
+    header.setUint16(28, name.length, true);
+    header.setUint32(42, offset, true);
+    central.push(header, name);
+    offset += 30 + name.length + size;
+  }
+  const centralSize = central.reduce((sum, part) => sum + part.byteLength, 0);
+  const end = new DataView(new ArrayBuffer(22));
+  end.setUint32(0, 0x06054b50, true);
+  end.setUint16(8, entries.length, true);
+  end.setUint16(10, entries.length, true);
+  end.setUint32(12, centralSize, true);
+  end.setUint32(16, offset, true);
+  return new Blob([...parts, ...central, end], { type: 'application/zip' });
+}
+
+async function runInBrowser(options) {
+  const startedAt = performance.now();
+  const { tasks, skipped } = planBrowserTasks(state.files, options.format);
+  showSkipped(skipped);
+  if (!tasks.length) { setStatus('沒有需要轉檔的檔案'); return; }
+
+  const results = [];
+  let done = 0;
+  let failures = 0;
+  setProgress(0, tasks.length, '轉檔中');
+  // 每張 2400 萬像素的圖解開約 100MB 記憶體，最多同時 4 張，避免手機或小筆電被撐爆
+  const workerCount = Math.max(1, Math.min(navigator.hardwareConcurrency || 4, 4, tasks.length));
+  const workerUrl = URL.createObjectURL(new Blob([$('worker-src').textContent], { type: 'text/javascript' }));
+  const queue = [...tasks];
+  const runWorker = async () => {
+    const worker = new Worker(workerUrl);
+    try {
+      while (queue.length) {
+        const task = queue.shift();
+        const result = await convertInWorker(worker, task, options);
+        done++;
+        if (result.ok) results.push({ name: task.outName, bytes: result.bytes, crc: result.crc });
+        else failures++;
+        appendLog(task.file.name, task.outName, result.ok ? null : result.error);
+        setProgress(done, tasks.length, '轉檔中');
+      }
+    } finally {
+      worker.terminate();
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, runWorker));
+  URL.revokeObjectURL(workerUrl);
+
+  setStatus(finishedText(done, failures, skipped.length, startedAt), failures > 0);
+  if (!results.length) return;
+  results.sort((a, b) => a.name.localeCompare(b.name));
+  if (results.length === 1) {
+    const [only] = results;
+    const url = URL.createObjectURL(new Blob([only.bytes]));
+    addAction(downloadLink(url, only.name, `下載 ${only.name}`));
+    return;
+  }
+  const zip = buildZip(results);
+  addAction(downloadLink(URL.createObjectURL(zip), `Nolan轉檔_${options.format}.zip`, `下載 zip（${results.length} 個・${formatBytes(zip.size)}）`));
+}
+
+// ---------- 本機引擎 ----------
+
+async function api(path, init = {}) {
+  const headers = { 'X-Nolan': '1', ...(typeof init.body === 'string' ? { 'Content-Type': 'application/json' } : {}) };
+  const response = await fetch(path, { ...init, headers });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `伺服器錯誤 ${response.status}`);
+  return data;
+}
+
+async function pollJob(id) {
+  let since = 0;
+  let skippedShown = false;
+  while (true) {
+    const job = await api(`/api/jobs/${id}?since=${since}`);
+    if (!skippedShown && job.skipped.length) { showSkipped(job.skipped); skippedShown = true; }
+    for (const entry of job.log) appendLog(entry.name, entry.output, entry.error);
+    since += job.log.length;
+    if (job.status === 'error') throw new Error(job.error || '轉檔失敗');
+    if (job.status === 'done') return job;
+    setProgress(job.done, job.total, job.status === 'queued' ? '排隊中（另一個工作還在轉）' : '轉檔中');
+    await sleep(600);
+  }
+}
+
+function showLocalResult(job, startedAt) {
+  setProgress(job.done, job.total);
+  setStatus(finishedText(job.done, job.failures, job.skipped.length, startedAt), job.failures > 0);
+}
+
+async function runLocalUpload(options) {
+  const startedAt = performance.now();
+  const { id } = await api('/api/jobs', { method: 'POST', body: '{}' });
+  const files = [...state.files];
+  const queue = [...files];
+  let uploaded = 0;
+  setProgress(0, files.length, '上傳中');
+  const uploadNext = async () => {
+    while (queue.length) {
+      const file = queue.shift();
+      await api(`/api/jobs/${id}/files?name=${encodeURIComponent(file.name)}`, { method: 'PUT', body: file });
+      uploaded++;
+      setProgress(uploaded, files.length, '上傳中');
+    }
+  };
+  await Promise.all([uploadNext(), uploadNext(), uploadNext()]);
+  await api(`/api/jobs/${id}/start`, { method: 'POST', body: JSON.stringify(serverOptions(options)) });
+  const job = await pollJob(id);
+  showLocalResult(job, startedAt);
+  if (job.done - job.failures > 0) {
+    addAction(downloadLink(`/api/jobs/${id}/zip`, null, `下載 zip（${job.done - job.failures} 個）`));
+  }
+}
+
+async function runLocalFolder(options) {
+  const startedAt = performance.now();
+  const body = {
+    ...serverOptions(options),
+    path: $('folder-path').value,
+    output: $('output-path').value.trim() || null,
+    recursive: $('recursive').checked,
+  };
+  const { id, output_dir: outputDir } = await api('/api/folder', { method: 'POST', body: JSON.stringify(body) });
+  setStatus(`輸出到 ${outputDir}`);
+  const job = await pollJob(id);
+  showLocalResult(job, startedAt);
+  if (job.done - job.failures > 0) {
+    const reveal = document.createElement('button');
+    reveal.type = 'button';
+    reveal.className = 'btn primary';
+    reveal.textContent = '在 Finder 打開輸出資料夾';
+    reveal.addEventListener('click', () => api(`/api/jobs/${id}/reveal`, { method: 'POST', body: '{}' }).catch((error) => setStatus(error.message, true)));
+    addAction(reveal);
+    const path = document.createElement('span');
+    path.className = 'hint';
+    path.textContent = job.output_dir;
+    addAction(path);
+  }
+}
+
+async function start() {
+  if (state.running) return;
+  state.running = true;
+  updateStartButton();
+  resetResult();
+  const options = readOptions();
+  try {
+    if (state.engine === 'local' && state.tab === 'folder') await runLocalFolder(options);
+    else if (state.engine === 'local') await runLocalUpload(options);
+    else await runInBrowser(options);
+  } catch (error) {
+    setStatus(error.message || String(error), true);
+  } finally {
+    state.running = false;
+    updateStartButton();
+  }
+}
+
+function bindEvents() {
+  for (const button of document.querySelectorAll('[data-format]')) {
+    button.addEventListener('click', () => setFormat(button.dataset.format));
+  }
+  for (const button of document.querySelectorAll('[data-tab]')) {
+    button.addEventListener('click', () => setTab(button.dataset.tab));
+  }
+  $('quality').addEventListener('input', () => { $('quality-value').value = $('quality').value; });
+  $('pick').addEventListener('click', () => $('file-input').click());
+  $('file-input').addEventListener('change', (event) => { addFiles(event.target.files); event.target.value = ''; });
+  $('clear').addEventListener('click', () => { state.files = []; renderSummary(); });
+  $('folder-path').addEventListener('input', () => { updateOutputPlaceholder(); updateStartButton(); });
+  $('start').addEventListener('click', start);
+
+  const dropzone = $('dropzone');
+  // 整頁都接受拖放，避免檔案掉到框外時瀏覽器直接開啟圖片
+  window.addEventListener('dragover', (event) => { event.preventDefault(); dropzone.classList.add('dragover'); });
+  window.addEventListener('dragleave', (event) => { if (!event.relatedTarget) dropzone.classList.remove('dragover'); });
+  window.addEventListener('drop', async (event) => {
+    event.preventDefault();
+    dropzone.classList.remove('dragover');
+    if (state.tab !== 'drop' || state.running) return;
+    addFiles(await filesFromDrop(event.dataTransfer));
+  });
+}
+
+async function init() {
+  setFavicon();
+  bindEvents();
+  state.engine = await detectEngine();
+  if (state.engine === 'browser' && typeof OffscreenCanvas === 'undefined') {
+    setStatus('這個瀏覽器太舊，無法在瀏覽器裡轉檔，請更新到最新版。', true);
+  }
+  applyEngine();
+  setFormat('jpg');
+  setTab('drop');
+}
+
+init();
+</script>
+</body>
+</html>
