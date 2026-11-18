@@ -56,14 +56,16 @@
   h1 .divider { color: var(--accent-strong); margin: 0 2px; }
   .sub { margin: 2px 0 0; color: var(--muted); font: 12px/1.4 var(--mono); }
   .owner-bar {
-    display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center;
-    margin-bottom: 20px; padding: 8px 12px; font-size: 13px;
+    display: grid; gap: 8px; margin-bottom: 20px; padding: 10px 12px; font-size: 13px;
     background: var(--panel); border: 2px dashed var(--border);
   }
   .owner-bar[hidden] { display: none; }
-  .owner-bar strong { font-weight: 700; }
+  .owner-bar strong { font-weight: 700; margin-right: 8px; }
+  .owner-bar .hint { margin: 0; display: inline; }
+  .owner-row { display: flex; gap: 8px 14px; align-items: center; flex-wrap: wrap; }
+  .owner-row input[type="text"] { flex: 1; min-width: 200px; padding: 5px 8px; font-size: 13px; }
   .owner-bar code {
-    font: 12px/1.4 var(--mono); padding: 3px 6px; overflow-wrap: anywhere;
+    display: block; font: 12px/1.5 var(--mono); padding: 6px 8px; overflow-wrap: anywhere;
     background: var(--bg); border: 1px solid var(--border);
   }
   .mode-switch { margin-left: auto; display: flex; gap: 10px; align-items: center; }
@@ -179,10 +181,16 @@
 <body>
 <div class="wrap">
   <div class="owner-bar" id="owner-bar" hidden>
-    <strong>Nolan 專用・本機完整模式</strong>
-    <code id="launch-command">python3 ~/tools/imgconv/server.py</code>
-    <button type="button" class="btn small" id="copy-command">複製指令</button>
-    <a class="btn small" href="http://127.0.0.1:8765/">已啟動，前往 →</a>
+    <div><strong>Nolan 專用・Mac 完整轉檔</strong><p class="hint">貼上資料夾路徑，複製指令到終端機執行。Finder 選資料夾按 ⌥⌘C 可複製路徑；格式、品質、尺寸沿用下方設定。</p></div>
+    <div class="owner-row">
+      <input id="owner-folder" type="text" placeholder="~/Pictures/2026旅行" autocomplete="off" spellcheck="false" aria-label="資料夾路徑">
+      <button type="button" class="btn small" id="copy-command" disabled>複製指令</button>
+    </div>
+    <div class="owner-row">
+      <label class="check"><input id="owner-recursive" type="checkbox"> 含子資料夾</label>
+      <label class="check"><input id="owner-fast" type="checkbox"> CR3 快速模式</label>
+    </div>
+    <code id="launch-command">先輸入資料夾路徑</code>
   </div>
   <header class="top">
     <div class="logo-tile">
@@ -561,6 +569,32 @@ function setFormat(format) {
   $('quality').value = DEFAULT_QUALITY[format] ?? 90;
   $('quality-value').value = $('quality').value;
   updateOutputPlaceholder();
+  updateCommand();
+}
+
+const shellQuote = (text) => `'${text.replaceAll("'", `'\\''`)}'`;
+
+// ~ 放在引號裡不會被 shell 展開，所以開頭的 ~/ 要留在引號外
+const shellPath = (path) => (path.startsWith('~/') ? `~/${shellQuote(path.slice(2))}` : shellQuote(path));
+
+function buildCommand() {
+  const folder = $('owner-folder').value.trim().replace(/^['"]|['"]$/g, '').replace(/\/+$/, '');
+  if (!folder) return null;
+  const options = readOptions();
+  const parts = ['python3 ~/tools/imgconv/imgconv.py', shellPath(folder), '--to', options.format];
+  if (options.quality) parts.push('-q', options.quality);
+  if (options.maxSide) parts.push('--max', options.maxSide);
+  if ($('owner-recursive').checked) parts.push('-r');
+  if ($('owner-fast').checked) parts.push('--fast');
+  // 輸出放在來源旁邊的「資料夾名_格式」，跟本機網頁版的資料夾模式一致，也不會和相機原檔撞名
+  parts.push('-o', shellPath(`${folder}_${options.format}`));
+  return parts.join(' ');
+}
+
+function updateCommand() {
+  const command = buildCommand();
+  $('launch-command').textContent = command ?? '先輸入資料夾路徑';
+  $('copy-command').disabled = !command;
 }
 
 function setTab(tab) {
@@ -953,6 +987,10 @@ function bindEvents() {
       state.engine = button.dataset.engine;
       applyEngine();
     });
+  }
+  for (const id of ['owner-folder', 'owner-recursive', 'owner-fast', 'quality', 'max-side']) {
+    $(id).addEventListener('input', updateCommand);
+    $(id).addEventListener('change', updateCommand);
   }
   $('copy-command').addEventListener('click', async () => {
     const button = $('copy-command');
