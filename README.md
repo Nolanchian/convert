@@ -1,6 +1,6 @@
 # Nolan｜快速轉檔器
 
-批次把 CR3、JPG、PNG 轉成 JPG、PNG、WebP。
+批次把 CR3、HEIC、JPG、PNG 轉成 JPG、PNG、WebP。
 
 **線上版：<https://nolanchian.github.io/convert/>**
 
@@ -10,6 +10,7 @@
 |---|---|---|
 | 轉檔在哪裡跑 | 你自己的瀏覽器，檔案不會上傳 | 你自己的 Mac |
 | CR3 → JPG | 取相機內嵌的 JPEG（極快） | macOS 完整解 RAW，或選快速模式 |
+| HEIC（iPhone 照片） | ✓（瀏覽器不能原生解時，自動載入約 2MB 的 libheif 解碼器） | ✓（macOS 原生解碼） |
 | JPG / PNG → WebP / JPG / PNG | ✓ | ✓ |
 | 輸入方式 | 拖曳檔案或資料夾，下載 zip | 拖曳檔案，或直接指定 Mac 上的資料夾 |
 | 需要安裝 | 無 | Python 3.11+、Pillow，僅支援 macOS（用到 `sips`） |
@@ -43,5 +44,5 @@ python3 imgconv.py ~/Pictures/trip --to jpg --fast -o ~/Desktop/out
 
 ## 注意
 
-- 輸出一律移除 EXIF（含 GPS），保留色彩描述檔。
+- 輸出一律移除 EXIF（含 GPS），只保留照片方向，以及色彩描述檔。
 - RAW+JPEG 同名時，不會讓 CR3 的輸出蓋掉相機的 JPG。

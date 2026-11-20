@@ -13,7 +13,10 @@ from pathlib import Path
 from PIL import Image, ImageOps
 
 RAW_EXTS = {".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2"}
-INPUT_EXTS = RAW_EXTS | {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif"}
+HEIC_EXTS = {".heic", ".heif"}
+# Pillow 讀不了這些格式，要交給 macOS 的 sips 解碼
+SIPS_DECODE_EXTS = RAW_EXTS | HEIC_EXTS
+INPUT_EXTS = SIPS_DECODE_EXTS | {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif"}
 DEFAULT_QUALITY = {"jpg": 90, "webp": 82}
 PIL_FORMAT = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}
 # sips 解 RAW 本身已用滿多核心，同時開多個 sips 反而變慢；改成一個 sips 一次吃一批，批量只影響進度回報頻率
@@ -75,22 +78,68 @@ def extract_cr3_preview(src: Path) -> bytes:
         data = file.read(size)
     if not data.startswith(b"\xff\xd8"):
         raise ValueError(f"{src.name} 的內嵌資料不是 JPEG")
-    return data
+    return strip_jpeg_metadata(data, cr3_orientation(moov))
 
 
-def strip_jpeg_metadata(data: bytes) -> bytes:
-    # 不重新壓縮，直接拿掉 APP1（EXIF/XMP，含 GPS）；APP2 的 ICC 色彩描述檔保留
+def cr3_orientation(moov: bytes) -> int:
+    # 直拍的方向記在 CMT1（一段 TIFF IFD0）裡，內嵌 JPEG 本身沒有方向資訊
+    index = moov.find(b"CMT1")
+    if index < 4:
+        return 1
+    size = struct.unpack_from(">I", moov, index - 4)[0]
+    return tiff_orientation(moov[index + 4:index - 4 + size])
+
+
+def tiff_orientation(tiff: bytes) -> int:
+    try:
+        byte_order = "<" if tiff[:2] == b"II" else ">"
+        ifd_offset = struct.unpack_from(f"{byte_order}I", tiff, 4)[0]
+        entry_count = struct.unpack_from(f"{byte_order}H", tiff, ifd_offset)[0]
+        for index in range(entry_count):
+            tag, _, _, value = struct.unpack_from(f"{byte_order}HHIH", tiff, ifd_offset + 2 + 12 * index)
+            if tag == 0x0112:
+                return value if 1 <= value <= 8 else 1
+    except struct.error:
+        pass
+    return 1
+
+
+def orientation_segment(orientation: int) -> bytes:
+    # 最小的 EXIF：只有 Orientation 一個欄位，檢視器能轉正，又不帶 GPS 等拍攝資訊
+    tiff = (
+        b"MM\x00\x2a" + struct.pack(">IH", 8, 1)
+        + struct.pack(">HHIHH", 0x0112, 3, 1, orientation, 0) + struct.pack(">I", 0)
+    )
+    body = b"Exif\x00\x00" + tiff
+    return b"\xff\xe1" + struct.pack(">H", len(body) + 2) + body
+
+
+def strip_jpeg_metadata(data: bytes, orientation: int | None = None) -> bytes:
+    # 不重新壓縮，直接拿掉 APP1（EXIF/XMP，含 GPS）；APP2 的 ICC 色彩描述檔保留。
+    # 但方向要留下：sips 輸出的 JPG 畫面沒有轉正，只靠 EXIF 的 Orientation 標記
     kept = [data[:2]]
+    insert_at = 1
+    found_orientation = 1
     position = 2
     while position + 4 <= len(data) and data[position] == 0xFF:
         marker = data[position + 1]
         if marker == 0xDA:
             break
         length = struct.unpack_from(">H", data, position + 2)[0]
-        if marker != 0xE1:
-            kept.append(data[position:position + 2 + length])
+        segment = data[position:position + 2 + length]
+        if marker == 0xE1:
+            if segment[4:10] == b"Exif\x00\x00":
+                found_orientation = tiff_orientation(segment[10:])
+        else:
+            kept.append(segment)
+            # JFIF 的 APP0 要維持緊接在 SOI 後面
+            if marker == 0xE0 and len(kept) == 2:
+                insert_at = 2
         position += 2 + length
     kept.append(data[position:])
+    final_orientation = orientation or found_orientation
+    if final_orientation != 1:
+        kept.insert(insert_at, orientation_segment(final_orientation))
     return b"".join(kept)
 
 
@@ -148,19 +197,22 @@ def prepare_for_format(img: Image.Image, fmt: str) -> Image.Image:
 
 def convert_one(src: Path, dst: Path, fmt: str, quality: int | None, max_side: int | None, fast: bool) -> Path:
     with tempfile.TemporaryDirectory() as tmp_dir:
+        transpose = True
         if fast and src.suffix.lower() == ".cr3":
             preview = extract_cr3_preview(src)
             if fmt == "jpg" and not max_side:
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_bytes(strip_jpeg_metadata(preview))
+                dst.write_bytes(preview)
                 return dst
             source = io.BytesIO(preview)
-        elif src.suffix.lower() in RAW_EXTS:
+        elif src.suffix.lower() in SIPS_DECODE_EXTS:
             source = decode_raw(src, tmp_dir)
+            # sips 輸出 TIFF 時已經把畫面轉正，卻還留著原本的方向標記；再轉一次會多轉 90°
+            transpose = False
         else:
             source = src
         with Image.open(source) as opened:
-            img = ImageOps.exif_transpose(opened)
+            img = ImageOps.exif_transpose(opened) if transpose else opened.copy()
         # 保留色彩描述檔，否則 Display P3 等廣色域圖會偏色；EXIF 則刻意不帶
         icc_profile = img.info.get("icc_profile")
         if max_side:
@@ -226,7 +278,7 @@ def collect_jobs(args) -> tuple[list[tuple[Path, Path]], list[str]]:
 def run_jobs(jobs, fmt: str, quality: int | None, max_side: int | None, fast: bool, workers: int | None, on_result):
     def uses_sips_directly(src: Path) -> bool:
         suffix = src.suffix.lower()
-        return fmt == "jpg" and suffix in RAW_EXTS and not (fast and suffix == ".cr3")
+        return fmt == "jpg" and suffix in SIPS_DECODE_EXTS and not (fast and suffix == ".cr3")
 
     sips_groups: dict[Path, list[tuple[Path, Path]]] = {}
     pillow_jobs = []
@@ -257,7 +309,7 @@ def run_jobs(jobs, fmt: str, quality: int | None, max_side: int | None, fast: bo
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="快速圖片轉檔：RAW/JPG/PNG → JPG/PNG/WebP")
+    parser = argparse.ArgumentParser(description="快速圖片轉檔：RAW/HEIC/JPG/PNG → JPG/PNG/WebP")
     parser.add_argument("inputs", nargs="+", type=Path, help="檔案或資料夾")
     parser.add_argument("--to", required=True, choices=PIL_FORMAT.keys(), help="輸出格式")
     parser.add_argument("-q", "--quality", type=int, help="品質 1-100（預設 JPG 90、WebP 82）")

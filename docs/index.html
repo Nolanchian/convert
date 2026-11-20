@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nolan｜快速轉檔器</title>
-<meta name="description" content="RAW（CR3）、JPG、PNG 快速批次轉成 JPG、PNG、WebP。">
+<meta name="description" content="RAW（CR3）、HEIC、JPG、PNG 快速批次轉成 JPG、PNG、WebP。">
 <style>
   :root {
     --bg: #f3efe6;
@@ -216,7 +216,7 @@
     </div>
     <div>
       <h1>Nolan<span class="divider">｜</span>快速轉檔器</h1>
-      <p class="sub">CR3・JPG・PNG → JPG・PNG・WebP</p>
+      <p class="sub">CR3・HEIC・JPG・PNG → JPG・PNG・WebP</p>
     </div>
     <div class="mode-switch">
       <div class="seg" role="group" aria-label="模式">
@@ -276,7 +276,7 @@
       <p>把照片或整個資料夾拖進來</p>
       <button type="button" class="btn" id="pick">選擇檔案</button>
       <input id="file-input" type="file" multiple hidden
-        accept=".cr3,.cr2,.nef,.arw,.dng,.raf,.orf,.rw2,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif">
+        accept=".cr3,.cr2,.nef,.arw,.dng,.raf,.orf,.rw2,.heic,.heif,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif">
     </div>
     <div class="summary" id="summary" hidden>
       <span id="summary-text"></span>
@@ -326,6 +326,7 @@
         <tr><th>誰可以用</th><td data-col="local">僅限 Nolan 本人</td><td data-col="browser">所有人</td></tr>
         <tr><th>在哪裡轉檔</th><td data-col="local">Nolan 的 Mac</td><td data-col="browser">你自己的裝置，檔案不會上傳</td></tr>
         <tr><th>CR3 畫質</th><td data-col="local">macOS 完整解 RAW，畫質最好</td><td data-col="browser">取相機內嵌的 JPEG，極快但畫質較低</td></tr>
+        <tr><th>HEIC</th><td data-col="local">macOS 原生解碼</td><td data-col="browser">支援；瀏覽器不能原生解時，會自動下載約 2MB 的解碼器</td></tr>
         <tr><th>其他 RAW</th><td data-col="local">CR2、NEF、ARW、DNG 等</td><td data-col="browser">不支援</td></tr>
         <tr><th>檔案來源</th><td data-col="local">拖曳檔案，或指定 Mac 上的資料夾</td><td data-col="browser">拖曳檔案或資料夾，轉完下載 zip</td></tr>
       </tbody>
@@ -340,7 +341,10 @@
 
 <script type="text/plain" id="worker-src">
 const RAW_EXTS = new Set(['cr2', 'cr3', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2']);
+const HEIC_EXTS = new Set(['heic', 'heif']);
 const MIME = { jpg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+// 固定版本，避免套件更新後網站突然壞掉；只有遇到瀏覽器解不了的 HEIC 才會下載（約 2MB）
+const LIBHEIF_URL = 'https://cdn.jsdelivr.net/npm/libheif-js@1.23.5/libheif-wasm/libheif-bundle.js';
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -408,25 +412,103 @@ async function extractCr3Preview(file) {
   const offset = co64 ? Number(moov.getBigUint64(co64[0] + 8)) : moov.getUint32(stco[0] + 8);
   const bytes = new Uint8Array(await file.slice(offset, offset + size).arrayBuffer());
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8) throw new Error('內嵌資料不是 JPEG');
-  return bytes;
+  const moovBytes = new Uint8Array(moov.buffer, moov.byteOffset, moov.byteLength);
+  return withOrientation(bytes, cr3Orientation(moovBytes));
 }
 
-// 不重新壓縮，直接拿掉 APP1（EXIF/XMP，含 GPS）
-function stripApp1(bytes) {
+function tiffOrientation(bytes) {
+  try {
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const little = bytes[0] === 0x49;
+    const ifd = view.getUint32(4, little);
+    const count = view.getUint16(ifd, little);
+    for (let i = 0; i < count; i++) {
+      const entry = ifd + 2 + 12 * i;
+      if (view.getUint16(entry, little) === 0x0112) {
+        const value = view.getUint16(entry + 8, little);
+        return value >= 1 && value <= 8 ? value : 1;
+      }
+    }
+  } catch {}
+  return 1;
+}
+
+// 直拍的方向記在 CMT1（一段 TIFF IFD0）裡，內嵌 JPEG 本身沒有方向資訊
+function cr3Orientation(moovBytes) {
+  const tag = [0x43, 0x4d, 0x54, 0x31];
+  for (let i = 4; i + 4 <= moovBytes.length; i++) {
+    if (tag.every((byte, k) => moovBytes[i + k] === byte)) {
+      const size = new DataView(moovBytes.buffer, moovBytes.byteOffset + i - 4, 4).getUint32(0);
+      return tiffOrientation(moovBytes.subarray(i + 4, i - 4 + size));
+    }
+  }
+  return 1;
+}
+
+// 最小的 EXIF：只有 Orientation 一個欄位，檢視器能轉正，又不帶 GPS 等拍攝資訊
+function orientationSegment(orientation) {
+  const segment = new Uint8Array(36);
+  const view = new DataView(segment.buffer);
+  view.setUint16(0, 0xffe1);
+  view.setUint16(2, segment.length - 2);
+  segment.set([0x45, 0x78, 0x69, 0x66, 0, 0, 0x4d, 0x4d, 0x00, 0x2a], 4);
+  view.setUint32(14, 8);
+  view.setUint16(18, 1);
+  view.setUint16(20, 0x0112);
+  view.setUint16(22, 3);
+  view.setUint32(24, 1);
+  view.setUint16(28, orientation);
+  return segment;
+}
+
+// 不重新壓縮：拿掉 APP1（EXIF/XMP，含 GPS），需要時補回只有方向的 EXIF
+function withOrientation(bytes, orientation) {
   const kept = [bytes.subarray(0, 2)];
+  let insertAt = 1;
   let position = 2;
   while (position + 4 <= bytes.length && bytes[position] === 0xff) {
     const marker = bytes[position + 1];
     if (marker === 0xda) break;
     const length = (bytes[position + 2] << 8) | bytes[position + 3];
-    if (marker !== 0xe1) kept.push(bytes.subarray(position, position + 2 + length));
+    if (marker !== 0xe1) {
+      kept.push(bytes.subarray(position, position + 2 + length));
+      if (marker === 0xe0 && kept.length === 2) insertAt = 2;
+    }
     position += 2 + length;
   }
   kept.push(bytes.subarray(position));
+  if (orientation > 1) kept.splice(insertAt, 0, orientationSegment(orientation));
   const out = new Uint8Array(kept.reduce((sum, part) => sum + part.length, 0));
   let offset = 0;
   for (const part of kept) { out.set(part, offset); offset += part.length; }
   return out;
+}
+
+let libheifModule = null;
+
+async function loadLibheif() {
+  if (!libheifModule) {
+    importScripts(LIBHEIF_URL);
+    libheifModule = await self.libheif();
+  }
+  return libheifModule;
+}
+
+async function decodeHeic(file) {
+  // Safari 等能原生解 HEIC 的瀏覽器直接用，不必下載解碼器
+  try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch {}
+  const heif = await loadLibheif();
+  const images = new heif.HeifDecoder().decode(new Uint8Array(await file.arrayBuffer()));
+  if (!images?.length) throw new Error('讀不到 HEIC 裡的影像');
+  const image = images[0];
+  const width = image.get_width();
+  const height = image.get_height();
+  const pixels = await new Promise((resolve, reject) => {
+    image.display({ data: new Uint8ClampedArray(width * height * 4), width, height }, (result) =>
+      result ? resolve(result) : reject(new Error('HEIC 解碼失敗')));
+  });
+  image.free?.();
+  return createImageBitmap(new ImageData(pixels.data, width, height));
 }
 
 function reply(bytes) {
@@ -438,14 +520,17 @@ self.onmessage = async ({ data }) => {
   try {
     const ext = file.name.split('.').pop().toLowerCase();
     let source = file;
+    let bitmap = null;
     if (ext === 'cr3') {
       const preview = await extractCr3Preview(file);
-      if (format === 'jpg' && !maxSide) return reply(stripApp1(preview));
+      if (format === 'jpg' && !maxSide) return reply(preview);
       source = new Blob([preview], { type: 'image/jpeg' });
+    } else if (HEIC_EXTS.has(ext)) {
+      bitmap = await decodeHeic(file);
     } else if (RAW_EXTS.has(ext)) {
-      throw new Error('瀏覽器模式只支援 CR3 這種 RAW');
+      throw new Error('限制模式只支援 CR3 這種 RAW');
     }
-    const bitmap = await createImageBitmap(source, { imageOrientation: 'from-image' });
+    bitmap ??= await createImageBitmap(source, { imageOrientation: 'from-image' });
     const scale = maxSide ? Math.min(1, maxSide / Math.max(bitmap.width, bitmap.height)) : 1;
     const width = Math.round(bitmap.width * scale);
     const height = Math.round(bitmap.height * scale);
@@ -466,7 +551,7 @@ self.onmessage = async ({ data }) => {
 
 <script type="module">
 const RAW_EXTS = new Set(['cr2', 'cr3', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2']);
-const INPUT_EXTS = new Set([...RAW_EXTS, 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif']);
+const INPUT_EXTS = new Set([...RAW_EXTS, 'heic', 'heif', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif']);
 const DEFAULT_QUALITY = { jpg: 90, webp: 82 };
 const LOCAL_HOSTS = ['127.0.0.1', 'localhost'];
 
