@@ -183,6 +183,10 @@
   <div class="owner-bar" id="owner-bar" hidden>
     <div><strong>Nolan 專用・Mac 完整轉檔</strong><p class="hint">貼上資料夾路徑，複製指令到終端機執行。Finder 選資料夾按 ⌥⌘C 可複製路徑；格式、品質、尺寸沿用下方設定。</p></div>
     <div class="owner-row">
+      <button type="button" class="btn small" id="link-local">連到我的 Mac</button>
+      <span class="hint" id="link-status"></span>
+    </div>
+    <div class="owner-row">
       <input id="owner-folder" type="text" placeholder="~/Pictures/2026旅行" autocomplete="off" spellcheck="false" aria-label="資料夾路徑">
       <button type="button" class="btn small" id="copy-command" disabled>複製指令</button>
     </div>
@@ -567,8 +571,11 @@ const stemOf = (name) => name.replace(/\.[^.]+$/, '');
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const HELP_DISMISSED_KEY = 'nolan-converter:help-dismissed';
+const LINKED_KEY = 'nolan-converter:linked-local';
+const LOCAL_SERVER = 'http://127.0.0.1:8765';
 
-const state = { engine: 'browser', localAvailable: false, tab: 'drop', format: 'jpg', files: [], running: false };
+// apiBase：在本機網址打開時是同源（''）；從線上版連到 Mac 時是 LOCAL_SERVER
+const state = { engine: 'browser', localAvailable: false, apiBase: '', tab: 'drop', format: 'jpg', files: [], running: false };
 
 function formatBytes(bytes) {
   if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
@@ -584,14 +591,72 @@ function setFavicon() {
   document.head.append(link);
 }
 
-async function detectEngine() {
-  // 只有從這台電腦的本機伺服器打開時才用本機引擎；GitHub Pages 上一律在瀏覽器裡轉
-  if (!LOCAL_HOSTS.includes(location.hostname)) return 'browser';
+async function pingLocal(base, timeoutMs) {
   try {
-    const response = await fetch('/api/ping', { cache: 'no-store' });
-    if (response.ok) return 'local';
+    const response = await fetch(`${base}/api/ping`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+function readLinked() {
+  try { return localStorage.getItem(LINKED_KEY) === '1'; } catch { return false; }
+}
+
+function saveLinked(linked) {
+  try {
+    if (linked) localStorage.setItem(LINKED_KEY, '1');
+    else localStorage.removeItem(LINKED_KEY);
   } catch {}
-  return 'browser';
+}
+
+async function detectLocal() {
+  if (LOCAL_HOSTS.includes(location.hostname)) {
+    state.localAvailable = await pingLocal('', 2000);
+    return;
+  }
+  // 只有按過「連到我的 Mac」的瀏覽器才會自動去連 127.0.0.1，訪客不會被詢問本機網路權限
+  if (readLinked() && (await pingLocal(LOCAL_SERVER, 1500))) {
+    state.localAvailable = true;
+    state.apiBase = LOCAL_SERVER;
+  }
+}
+
+function renderLinkStatus(message, isError = false) {
+  const linked = state.apiBase !== '';
+  $('link-local').textContent = linked ? '中斷連線' : '連到我的 Mac';
+  $('link-status').textContent = message ?? (linked
+    ? '已連到這台 Mac，可以使用本機完整模式。'
+    : '連上後可在這個網頁直接用本機完整模式（Mac 上的 server.py 要在執行）。');
+  $('link-status').style.color = isError ? 'var(--bad)' : '';
+}
+
+async function linkLocal() {
+  $('link-local').disabled = true;
+  renderLinkStatus('連線中…（瀏覽器若詢問是否允許存取本機網路，請按允許）');
+  // 第一次連線時瀏覽器可能跳出權限詢問，要等使用者按，所以逾時給長一點
+  const ok = await pingLocal(LOCAL_SERVER, 60000);
+  $('link-local').disabled = false;
+  if (!ok) {
+    renderLinkStatus('連不到。請確認 Mac 上的伺服器有在執行（python3 ~/tools/imgconv/server.py），以及瀏覽器有允許存取本機網路。', true);
+    return;
+  }
+  saveLinked(true);
+  state.apiBase = LOCAL_SERVER;
+  state.localAvailable = true;
+  state.engine = 'local';
+  applyEngine();
+  renderLinkStatus();
+}
+
+function unlinkLocal() {
+  saveLinked(false);
+  state.apiBase = '';
+  state.localAvailable = false;
+  state.engine = 'browser';
+  applyEngine();
+  renderLinkStatus();
 }
 
 function browserCanEncodeWebp() {
@@ -993,7 +1058,7 @@ async function runInBrowser(options) {
 
 async function api(path, init = {}) {
   const headers = { 'X-Nolan': '1', ...(typeof init.body === 'string' ? { 'Content-Type': 'application/json' } : {}) };
-  const response = await fetch(path, { ...init, headers });
+  const response = await fetch(`${state.apiBase}${path}`, { ...init, headers });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `伺服器錯誤 ${response.status}`);
   return data;
@@ -1038,8 +1103,12 @@ async function runLocalUpload(options) {
   await api(`/api/jobs/${id}/start`, { method: 'POST', body: JSON.stringify(serverOptions(options)) });
   const job = await pollJob(id);
   showLocalResult(job, startedAt);
-  if (job.done - job.failures > 0) {
-    addAction(downloadLink(`/api/jobs/${id}/zip`, null, `下載 zip（${job.done - job.failures} 個）`));
+  const count = job.done - job.failures;
+  if (count > 0) {
+    const zipUrl = `${state.apiBase}/api/jobs/${id}/zip`;
+    // 從線上版連本機時，跨網站的下載連結可能被瀏覽器擋下，先抓成 blob 再給下載連結
+    const href = state.apiBase ? URL.createObjectURL(await (await fetch(zipUrl)).blob()) : zipUrl;
+    addAction(downloadLink(href, `Nolan轉檔_${options.format}.zip`, `下載 zip（${count} 個）`));
   }
 }
 
@@ -1116,6 +1185,11 @@ function bindEvents() {
     }
     setTimeout(() => { button.textContent = '複製指令'; }, 2500);
   });
+  $('link-local').addEventListener('click', () => {
+    if (state.running) return;
+    if (state.apiBase) unlinkLocal();
+    else linkLocal();
+  });
   $('open-help').addEventListener('click', openHelp);
   $('close-help').addEventListener('click', () => $('help-dialog').close());
   // 用 Esc 關掉也要記住勾選狀態，所以存在 close 事件而不是按鈕上
@@ -1142,9 +1216,10 @@ function bindEvents() {
 async function init() {
   setFavicon();
   bindEvents();
-  state.localAvailable = (await detectEngine()) === 'local';
+  await detectLocal();
   state.engine = state.localAvailable ? 'local' : 'browser';
-  $('owner-bar').hidden = state.localAvailable;
+  $('owner-bar').hidden = LOCAL_HOSTS.includes(location.hostname);
+  renderLinkStatus();
   if (!state.localAvailable && typeof OffscreenCanvas === 'undefined') {
     setStatus('這個瀏覽器太舊，無法使用限制模式，請更新到最新版。', true);
   }

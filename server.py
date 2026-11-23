@@ -20,6 +20,8 @@ import imgconv
 INDEX_HTML = Path(__file__).resolve().parent / "docs" / "index.html"
 WORKSPACE = Path(tempfile.gettempdir()) / "nolan-converter"
 HOME = Path.home().resolve()
+# 只有線上版可以跨站連進來；其他網站的請求一律擋掉
+REMOTE_ORIGINS = {"https://nolanchian.github.io"}
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 MAX_JSON_BYTES = 64 * 1024
 JOB_TTL_SECONDS = 3600
@@ -168,6 +170,29 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         self.dispatch("PUT")
 
+    def do_OPTIONS(self):
+        origin = self.headers.get("Origin")
+        if self.headers.get("Host", "") not in self.server.allowed_hosts or origin not in REMOTE_ORIGINS:
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        self.send_response(204)
+        self.send_cors_headers()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT")
+        self.send_header("Access-Control-Allow-Headers", "X-Nolan, Content-Type")
+        # Chrome 從公開網站連本機（Private Network Access）時要求的回應標頭
+        self.send_header("Access-Control-Allow-Private-Network", "true")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def send_cors_headers(self):
+        origin = self.headers.get("Origin")
+        if origin in REMOTE_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
+
     def dispatch(self, method: str):
         try:
             self.check_request(method)
@@ -185,6 +210,10 @@ class Handler(BaseHTTPRequestHandler):
         # 只接受直接連 127.0.0.1/localhost 的請求，擋 DNS rebinding
         if self.headers.get("Host", "") not in self.server.allowed_hosts:
             raise ApiError(403, "不允許的 Host")
+        origin = self.headers.get("Origin")
+        local_origins = {f"http://{host}" for host in self.server.allowed_hosts}
+        if origin and origin not in local_origins | REMOTE_ORIGINS:
+            raise ApiError(403, "不允許的來源網站")
         # 自訂標頭會觸發 CORS 預檢，其他網站就無法跨站叫這台 Mac 轉檔或寫檔
         if method != "GET" and self.headers.get("X-Nolan") != "1":
             raise ApiError(403, "缺少 X-Nolan 標頭")
@@ -299,6 +328,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -307,6 +337,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(path.stat().st_size))
         self.send_header("Cache-Control", "no-store")
+        self.send_cors_headers()
         if download_name:
             self.send_header(
                 "Content-Disposition", f"attachment; filename=\"nolan.zip\"; filename*=UTF-8''{quote(download_name)}"

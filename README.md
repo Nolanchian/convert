@@ -26,6 +26,21 @@ python3 server.py
 
 會自動開啟 `http://127.0.0.1:8765/`。伺服器只接受這台電腦的連線，其他人無法用你的電腦轉檔。
 
+### 從線上版連到本機
+
+伺服器在執行時，打開線上版最上方的「連到我的 Mac」，就能在線上版直接用本機完整模式；之後這個瀏覽器會自動連線。伺服器除了本機網頁，只接受來自 `https://nolanchian.github.io` 的跨站請求。沒按過這個按鈕的瀏覽器不會去連 `127.0.0.1`。
+
+### 開機自動啟動（macOS）
+
+用 LaunchAgent 在登入時於背景執行 `server.py --no-open`，記錄寫在 `~/Library/Logs/nolan-converter.log`：
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/local.nolan.converter.plist   # 啟用
+launchctl bootout gui/$(id -u)/local.nolan.converter                                   # 停用
+```
+
+背景執行時，若要轉「文件」「桌面」「下載項目」裡的檔案，macOS 可能要求在「系統設定 → 隱私權與安全性」允許 Python 存取。
+
 ## 命令列
 
 ```bash
