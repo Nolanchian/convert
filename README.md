@@ -32,11 +32,12 @@ python3 server.py
 python3 imgconv.py ~/Pictures/trip --to jpg -o ~/Desktop/out
 python3 imgconv.py ~/Pictures/trip -r --to webp --max 2048 -q 80 -o ~/Desktop/web
 python3 imgconv.py ~/Pictures/trip --to jpg --fast -o ~/Desktop/out
+python3 imgconv.py ~/Documents/reports --to docx -o ~/Desktop/word
 ```
 
 | 參數 | 說明 |
 |---|---|
-| `--to` | 圖片的輸出格式：`jpg`、`png`、`webp`（ODT 一律轉成 `.docx`） |
+| `--to` | `jpg`、`png`、`webp` 只轉圖片；`docx` 只轉 ODT（其他檔案會略過） |
 | `-q` | 品質 1–100（預設 JPG 90、WebP 82） |
 | `--max` | 長邊上限（px），只縮不放 |
 | `-o` | 輸出資料夾（預設放在原檔旁） |

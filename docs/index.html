@@ -236,10 +236,14 @@
     <h2>輸出設定</h2>
     <div class="field">
       <span>格式</span>
-      <div class="seg" role="group" aria-label="輸出格式">
-        <button type="button" data-format="jpg">JPG</button>
-        <button type="button" data-format="png">PNG</button>
-        <button type="button" data-format="webp">WebP</button>
+      <div>
+        <div class="seg" role="group" aria-label="輸出格式">
+          <button type="button" data-format="jpg">JPG</button>
+          <button type="button" data-format="png">PNG</button>
+          <button type="button" data-format="webp">WebP</button>
+          <button type="button" data-format="docx">Word</button>
+        </div>
+        <p class="hint" id="format-hint"></p>
       </div>
     </div>
     <div class="field" id="quality-field">
@@ -249,7 +253,7 @@
         <output id="quality-value" for="quality">90</output>
       </div>
     </div>
-    <div class="field">
+    <div class="field" id="max-side-field">
       <label for="max-side">長邊上限</label>
       <select id="max-side">
         <option value="">原尺寸</option>
@@ -261,16 +265,12 @@
         <option value="1080">1080 px</option>
       </select>
     </div>
-    <div class="field">
+    <div class="field" id="cr3-field">
       <span>CR3</span>
       <div>
         <label class="check"><input id="fast" type="checkbox"> 快速模式：直接取相機內嵌的 JPEG</label>
         <p class="hint" id="fast-hint"></p>
       </div>
-    </div>
-    <div class="field">
-      <span>文件</span>
-      <p class="hint" id="doc-hint"></p>
     </div>
   </section>
 
@@ -618,9 +618,10 @@ function applyEngine() {
     ? '不勾：用 macOS 完整解 RAW（畫質最好、較慢）。勾選：幾乎瞬間完成，畫質是相機內建的版本。'
     : '限制模式無法完整解 RAW，CR3 一律取相機內嵌的 JPEG。若同時有同名 JPG，會改用那張（畫質較好）。';
 
-  $('doc-hint').textContent = local
-    ? 'ODT 一律轉成 Word（.docx），不受上面的格式設定影響。'
-    : 'ODT 轉 Word 僅限本機完整模式，限制模式會略過 ODT 檔。';
+  // 限制模式也能選 Word：雖然瀏覽器轉不了，但最上方的 Nolan 專用列要靠它產生 --to docx 指令
+  document.querySelector('[data-format="docx"]').title = local ? 'ODT 轉成 Word（.docx）' : 'ODT 轉 Word 僅限本機完整模式';
+  updateFormatHint();
+  updateStartButton();
 
   const webp = document.querySelector('[data-format="webp"]');
   const webpBlocked = !local && !browserCanEncodeWebp();
@@ -660,11 +661,26 @@ function setFormat(format) {
   for (const button of document.querySelectorAll('[data-format]')) {
     button.setAttribute('aria-pressed', String(button.dataset.format === format));
   }
-  $('quality-field').hidden = format === 'png';
+  const isDocument = format === 'docx';
+  $('quality-field').hidden = format === 'png' || isDocument;
+  $('max-side-field').hidden = isDocument;
+  $('cr3-field').hidden = isDocument;
   $('quality').value = DEFAULT_QUALITY[format] ?? 90;
   $('quality-value').value = $('quality').value;
+  updateFormatHint();
   updateOutputPlaceholder();
   updateCommand();
+  updateStartButton();
+}
+
+function updateFormatHint() {
+  const local = state.engine === 'local';
+  let hint;
+  if (state.format !== 'docx') hint = local ? '只轉照片；ODT 文件請改選 Word。' : '只轉照片；Word（ODT 轉檔）僅限本機完整模式。';
+  else if (local) hint = '只轉 ODT 文件，輸出 Word（.docx）；照片會略過。';
+  else if (state.localAvailable) hint = '限制模式不能轉 Word，請切回本機完整模式。';
+  else hint = '限制模式不能轉 Word；可用最上方的 Nolan 專用指令，在 Mac 上把 ODT 轉成 Word。';
+  $('format-hint').textContent = hint;
 }
 
 const shellQuote = (text) => `'${text.replaceAll("'", `'\\''`)}'`;
@@ -680,7 +696,7 @@ function buildCommand() {
   if (options.quality) parts.push('-q', options.quality);
   if (options.maxSide) parts.push('--max', options.maxSide);
   if ($('owner-recursive').checked) parts.push('-r');
-  if ($('owner-fast').checked) parts.push('--fast');
+  if ($('owner-fast').checked && options.format !== 'docx') parts.push('--fast');
   // 輸出放在來源旁邊的「資料夾名_格式」，跟本機網頁版的資料夾模式一致，也不會和相機原檔撞名
   parts.push('-o', shellPath(`${folder}_${options.format}`));
   return parts.join(' ');
@@ -704,7 +720,8 @@ function setTab(tab) {
 
 function updateStartButton() {
   const ready = state.tab === 'folder' ? $('folder-path').value.trim() !== '' : state.files.length > 0;
-  $('start').disabled = state.running || !ready;
+  const browserCannotConvert = state.engine === 'browser' && state.format === 'docx';
+  $('start').disabled = state.running || !ready || browserCannotConvert;
 }
 
 function updateOutputPlaceholder() {
@@ -762,12 +779,12 @@ function renderSummary() {
 }
 
 function readOptions() {
-  const maxSide = Number($('max-side').value) || null;
+  const isDocument = state.format === 'docx';
   return {
     format: state.format,
-    quality: state.format === 'png' ? null : Number($('quality').value),
-    maxSide,
-    fast: $('fast').checked,
+    quality: state.format === 'png' || isDocument ? null : Number($('quality').value),
+    maxSide: isDocument ? null : Number($('max-side').value) || null,
+    fast: !isDocument && $('fast').checked,
   };
 }
 

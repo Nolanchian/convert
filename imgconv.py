@@ -23,6 +23,8 @@ SOFFICE_CANDIDATES = ["/Applications/LibreOffice.app/Contents/MacOS/soffice"]
 INPUT_EXTS = SIPS_DECODE_EXTS | DOC_EXTS | {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif"}
 DEFAULT_QUALITY = {"jpg": 90, "webp": 82}
 PIL_FORMAT = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}
+# docx 只給 ODT 用；選圖片格式時只轉圖片
+OUTPUT_FORMATS = [*PIL_FORMAT, "docx"]
 # sips 解 RAW 本身已用滿多核心，同時開多個 sips 反而變慢；改成一個 sips 一次吃一批，批量只影響進度回報頻率
 SIPS_BATCH_SIZE = 8
 
@@ -211,10 +213,6 @@ def soffice_to_docx(pairs: list[tuple[Path, Path]]) -> list[tuple[Path, Path, st
     return outcomes
 
 
-def output_suffix(src: Path, fmt: str) -> str:
-    return ".docx" if src.suffix.lower() in DOC_EXTS else f".{fmt}"
-
-
 def has_alpha(img: Image.Image) -> bool:
     return img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info)
 
@@ -294,8 +292,12 @@ def collect_jobs(args) -> tuple[list[tuple[Path, Path]], list[str]]:
     source_keys = {path_key(src) for src, _ in sources}
 
     for src, base in sources:
+        is_document = src.suffix.lower() in DOC_EXTS
+        if is_document != (args.to == "docx"):
+            skipped.append(f"ODT 只能轉成 Word（docx），略過：{src}" if is_document else f"選 Word 時只轉 ODT，略過：{src}")
+            continue
         relative = src.relative_to(base)
-        dst = ((args.output / relative) if args.output else src).with_suffix(output_suffix(src, args.to))
+        dst = ((args.output / relative) if args.output else src).with_suffix(f".{args.to}")
         dst_key = path_key(dst)
         if dst_key == path_key(src):
             skipped.append(f"來源與輸出相同，略過：{src}")
@@ -356,7 +358,7 @@ def run_jobs(jobs, fmt: str, quality: int | None, max_side: int | None, fast: bo
 def parse_args():
     parser = argparse.ArgumentParser(description="快速轉檔：RAW/HEIC/JPG/PNG → JPG/PNG/WebP；ODT → Word")
     parser.add_argument("inputs", nargs="+", type=Path, help="檔案或資料夾")
-    parser.add_argument("--to", required=True, choices=PIL_FORMAT.keys(), help="圖片的輸出格式（ODT 一律轉成 docx）")
+    parser.add_argument("--to", required=True, choices=OUTPUT_FORMATS, help="輸出格式：圖片用 jpg/png/webp，ODT 用 docx")
     parser.add_argument("-q", "--quality", type=int, help="品質 1-100（預設 JPG 90、WebP 82）")
     parser.add_argument("--max", dest="max_side", type=int, help="長邊上限（px），只縮不放")
     parser.add_argument("-o", "--output", type=Path, help="輸出資料夾（預設放在原檔旁）")

@@ -100,7 +100,7 @@ def get_job(job_id: str) -> Job:
 
 def parse_options(body: dict) -> dict:
     fmt = body.get("format")
-    if fmt not in imgconv.PIL_FORMAT:
+    if fmt not in imgconv.OUTPUT_FORMATS:
         raise ApiError(400, "不支援的輸出格式")
     quality = body.get("quality")
     if quality is not None and not (isinstance(quality, int) and 1 <= quality <= 100):
