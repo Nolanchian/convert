@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nolan｜快速轉檔器</title>
-<meta name="description" content="RAW（CR3）、HEIC、JPG、PNG 快速批次轉成 JPG、PNG、WebP。">
+<meta name="description" content="RAW（CR3）、HEIC、JPG、PNG 快速批次轉成 JPG、PNG、WebP；ODT 轉 Word。">
 <style>
   :root {
     --bg: #f3efe6;
@@ -216,7 +216,7 @@
     </div>
     <div>
       <h1>Nolan<span class="divider">｜</span>快速轉檔器</h1>
-      <p class="sub">CR3・HEIC・JPG・PNG → JPG・PNG・WebP</p>
+      <p class="sub">CR3・HEIC・JPG・PNG → JPG・PNG・WebP｜ODT → Word</p>
     </div>
     <div class="mode-switch">
       <div class="seg" role="group" aria-label="模式">
@@ -268,15 +268,19 @@
         <p class="hint" id="fast-hint"></p>
       </div>
     </div>
+    <div class="field">
+      <span>文件</span>
+      <p class="hint" id="doc-hint"></p>
+    </div>
   </section>
 
   <section class="card" id="panel-drop">
     <h2>檔案</h2>
     <div id="dropzone">
-      <p>把照片或整個資料夾拖進來</p>
+      <p>把照片、ODT 文件或整個資料夾拖進來</p>
       <button type="button" class="btn" id="pick">選擇檔案</button>
       <input id="file-input" type="file" multiple hidden
-        accept=".cr3,.cr2,.nef,.arw,.dng,.raf,.orf,.rw2,.heic,.heif,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif">
+        accept=".cr3,.cr2,.nef,.arw,.dng,.raf,.orf,.rw2,.heic,.heif,.odt,.jpg,.jpeg,.png,.webp,.tif,.tiff,.bmp,.gif">
     </div>
     <div class="summary" id="summary" hidden>
       <span id="summary-text"></span>
@@ -327,6 +331,7 @@
         <tr><th>在哪裡轉檔</th><td data-col="local">Nolan 的 Mac</td><td data-col="browser">你自己的裝置，檔案不會上傳</td></tr>
         <tr><th>CR3 畫質</th><td data-col="local">macOS 完整解 RAW，畫質最好</td><td data-col="browser">取相機內嵌的 JPEG，極快但畫質較低</td></tr>
         <tr><th>HEIC</th><td data-col="local">macOS 原生解碼</td><td data-col="browser">支援；瀏覽器不能原生解時，會自動下載約 2MB 的解碼器</td></tr>
+        <tr><th>ODT → Word</th><td data-col="local">LibreOffice 轉換，保留表格、清單、圖片</td><td data-col="browser">不支援</td></tr>
         <tr><th>其他 RAW</th><td data-col="local">CR2、NEF、ARW、DNG 等</td><td data-col="browser">不支援</td></tr>
         <tr><th>檔案來源</th><td data-col="local">拖曳檔案，或指定 Mac 上的資料夾</td><td data-col="browser">拖曳檔案或資料夾，轉完下載 zip</td></tr>
       </tbody>
@@ -551,7 +556,8 @@ self.onmessage = async ({ data }) => {
 
 <script type="module">
 const RAW_EXTS = new Set(['cr2', 'cr3', 'nef', 'arw', 'dng', 'raf', 'orf', 'rw2']);
-const INPUT_EXTS = new Set([...RAW_EXTS, 'heic', 'heif', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif']);
+const DOC_EXTS = new Set(['odt']);
+const INPUT_EXTS = new Set([...RAW_EXTS, ...DOC_EXTS, 'heic', 'heif', 'jpg', 'jpeg', 'png', 'webp', 'tif', 'tiff', 'bmp', 'gif']);
 const DEFAULT_QUALITY = { jpg: 90, webp: 82 };
 const LOCAL_HOSTS = ['127.0.0.1', 'localhost'];
 
@@ -611,6 +617,10 @@ function applyEngine() {
   $('fast-hint').textContent = local
     ? '不勾：用 macOS 完整解 RAW（畫質最好、較慢）。勾選：幾乎瞬間完成，畫質是相機內建的版本。'
     : '限制模式無法完整解 RAW，CR3 一律取相機內嵌的 JPEG。若同時有同名 JPG，會改用那張（畫質較好）。';
+
+  $('doc-hint').textContent = local
+    ? 'ODT 一律轉成 Word（.docx），不受上面的格式設定影響。'
+    : 'ODT 轉 Word 僅限本機完整模式，限制模式會略過 ODT 檔。';
 
   const webp = document.querySelector('[data-format="webp"]');
   const webpBlocked = !local && !browserCanEncodeWebp();
@@ -837,7 +847,8 @@ function planBrowserTasks(files, format) {
   for (const file of files) {
     const ext = extOf(file.name);
     const stem = stemOf(file.name);
-    if (RAW_EXTS.has(ext) && ext !== 'cr3') { skipped.push(`${file.name}：瀏覽器模式只支援 CR3 這種 RAW`); continue; }
+    if (DOC_EXTS.has(ext)) { skipped.push(`${file.name}：ODT 轉 Word 僅限本機完整模式`); continue; }
+    if (RAW_EXTS.has(ext) && ext !== 'cr3') { skipped.push(`${file.name}：限制模式只支援 CR3 這種 RAW`); continue; }
     if (ext === 'cr3' && nonRawStems.has(stem.toLowerCase())) { skipped.push(`${file.name}：已有同名的 JPG/PNG，改用那張`); continue; }
     const outName = `${stem}.${format}`;
     if (usedNames.has(outName.toLowerCase())) { skipped.push(`${file.name}：輸出檔名 ${outName} 重複`); continue; }

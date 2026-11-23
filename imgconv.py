@@ -2,6 +2,7 @@
 import argparse
 import io
 import os
+import shutil
 import struct
 import subprocess
 import sys
@@ -16,7 +17,10 @@ RAW_EXTS = {".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2"}
 HEIC_EXTS = {".heic", ".heif"}
 # Pillow 讀不了這些格式，要交給 macOS 的 sips 解碼
 SIPS_DECODE_EXTS = RAW_EXTS | HEIC_EXTS
-INPUT_EXTS = SIPS_DECODE_EXTS | {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif"}
+# 文件一律轉成 Word，不受 --to 影響
+DOC_EXTS = {".odt"}
+SOFFICE_CANDIDATES = ["/Applications/LibreOffice.app/Contents/MacOS/soffice"]
+INPUT_EXTS = SIPS_DECODE_EXTS | DOC_EXTS | {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp", ".gif"}
 DEFAULT_QUALITY = {"jpg": 90, "webp": 82}
 PIL_FORMAT = {"jpg": "JPEG", "png": "PNG", "webp": "WEBP"}
 # sips 解 RAW 本身已用滿多核心，同時開多個 sips 反而變慢；改成一個 sips 一次吃一批，批量只影響進度回報頻率
@@ -178,6 +182,39 @@ def decode_raw(src: Path, tmp_dir: str) -> Path:
     return out
 
 
+def find_soffice() -> str | None:
+    return shutil.which("soffice") or next((path for path in SOFFICE_CANDIDATES if Path(path).exists()), None)
+
+
+def soffice_to_docx(pairs: list[tuple[Path, Path]]) -> list[tuple[Path, Path, str | None]]:
+    soffice = find_soffice()
+    if not soffice:
+        message = "找不到 LibreOffice，請先安裝：brew install --cask libreoffice"
+        return [(src, dst, message) for src, dst in pairs]
+    out_dir = pairs[0][1].parent
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as profile_dir:
+        # 用獨立的設定檔：若 LibreOffice 正開著，共用設定檔會讓轉檔默默失敗
+        command = [
+            soffice, f"-env:UserInstallation={Path(profile_dir).as_uri()}", "--headless",
+            "--convert-to", "docx:MS Word 2007 XML", "--outdir", str(out_dir),
+            *[str(src) for src, _ in pairs],
+        ]
+        started = time.time()
+        result = subprocess.run(command, capture_output=True, text=True)
+    outcomes = []
+    for src, dst in pairs:
+        if dst.exists() and dst.stat().st_mtime >= started - 1:
+            outcomes.append((src, dst, None))
+        else:
+            outcomes.append((src, dst, f"LibreOffice 轉檔失敗：{result.stderr.strip() or '沒有產生輸出檔'}"))
+    return outcomes
+
+
+def output_suffix(src: Path, fmt: str) -> str:
+    return ".docx" if src.suffix.lower() in DOC_EXTS else f".{fmt}"
+
+
 def has_alpha(img: Image.Image) -> bool:
     return img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info)
 
@@ -258,7 +295,7 @@ def collect_jobs(args) -> tuple[list[tuple[Path, Path]], list[str]]:
 
     for src, base in sources:
         relative = src.relative_to(base)
-        dst = ((args.output / relative) if args.output else src).with_suffix(f".{args.to}")
+        dst = ((args.output / relative) if args.output else src).with_suffix(output_suffix(src, args.to))
         dst_key = path_key(dst)
         if dst_key == path_key(src):
             skipped.append(f"來源與輸出相同，略過：{src}")
@@ -280,13 +317,21 @@ def run_jobs(jobs, fmt: str, quality: int | None, max_side: int | None, fast: bo
         suffix = src.suffix.lower()
         return fmt == "jpg" and suffix in SIPS_DECODE_EXTS and not (fast and suffix == ".cr3")
 
+    doc_groups: dict[Path, list[tuple[Path, Path]]] = {}
     sips_groups: dict[Path, list[tuple[Path, Path]]] = {}
     pillow_jobs = []
     for src, dst in jobs:
-        if uses_sips_directly(src):
+        if src.suffix.lower() in DOC_EXTS:
+            doc_groups.setdefault(dst.parent, []).append((src, dst))
+        elif uses_sips_directly(src):
             sips_groups.setdefault(dst.parent, []).append((src, dst))
         else:
             pillow_jobs.append((src, dst))
+
+    # LibreOffice 啟動要好幾秒，同一個輸出資料夾的文件一次全丟給它
+    for group in doc_groups.values():
+        for outcome in soffice_to_docx(group):
+            on_result(*outcome)
 
     for group in sips_groups.values():
         for start in range(0, len(group), SIPS_BATCH_SIZE):
@@ -309,9 +354,9 @@ def run_jobs(jobs, fmt: str, quality: int | None, max_side: int | None, fast: bo
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="快速圖片轉檔：RAW/HEIC/JPG/PNG → JPG/PNG/WebP")
+    parser = argparse.ArgumentParser(description="快速轉檔：RAW/HEIC/JPG/PNG → JPG/PNG/WebP；ODT → Word")
     parser.add_argument("inputs", nargs="+", type=Path, help="檔案或資料夾")
-    parser.add_argument("--to", required=True, choices=PIL_FORMAT.keys(), help="輸出格式")
+    parser.add_argument("--to", required=True, choices=PIL_FORMAT.keys(), help="圖片的輸出格式（ODT 一律轉成 docx）")
     parser.add_argument("-q", "--quality", type=int, help="品質 1-100（預設 JPG 90、WebP 82）")
     parser.add_argument("--max", dest="max_side", type=int, help="長邊上限（px），只縮不放")
     parser.add_argument("-o", "--output", type=Path, help="輸出資料夾（預設放在原檔旁）")
